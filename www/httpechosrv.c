@@ -12,14 +12,17 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <pthread.h>
+#include <errno.h>
 
 #define MAXLINE  8192  /* max text line length */
 #define MAXBUF   8192  /* max I/O buffer size */
 #define LISTENQ  1024  /* second argument to listen() */
 
+/*function prototypes*/
 int open_listenfd(int port);
 void service_http_request(int connfd);
 void *thread(void *vargp);
+const char * get_filename_ext(const char *filename);
 
 int main(int argc, char **argv) 
 {
@@ -58,16 +61,81 @@ void * thread(void * vargp)
  */
 void service_http_request(int connfd)
 {
-    size_t n; 
-    char buf[MAXLINE]; 
-    char httpmsg[]="HTTP/1.1 200 Document Follows\r\nContent-Type:text/html\r\nContent-Length:32\r\n\r\n<html><h1>Hello CSCI4273 Course!</h1>"; 
+    size_t n;
+    char * request_method;
+    char * request_uri;
+    char *request_ver;
+    char buf[MAXLINE];
+    char * httpmsg="HTTP/1.1 200 Document Follows\r\nContent-Type:text/html\r\nContent-Length:32\r\n\r\n<html><h1>Hello CSCI4273 Course!</h1>";
+    while(1) {
+        /*setup select function*/
+        fd_set select_fds;
+        struct timeval timeout;
 
-    n = read(connfd, buf, MAXLINE);
-    printf("server received the following request:\n%s\n",buf);
-    strcpy(buf,httpmsg);
-    printf("server returning a http message with the following content.\n%s\n",buf);
-    write(connfd, buf,strlen(httpmsg));
-    
+        FD_ZERO(&select_fds);
+        FD_SET(connfd, &select_fds);
+        timeout.tv_sec = 10;
+        timeout.tv_usec = 0;
+        //close connection after 10s timeout
+        if (select(32, &select_fds, 0, 0, &timeout) == 0) {
+            printf("No activity from client. Closing Connection\n");
+            break;
+        }
+
+        n = read(connfd, buf, MAXLINE);
+        if (!n)
+            continue;
+        /*Parse request method*/
+        request_method = strtok(buf, " ");
+        /*GET method*/
+        if (strcmp(request_method, "GET") == 0) {
+            request_uri = strtok(NULL, " ");
+            if (strcmp(request_uri, "/")==0)
+                request_uri = "index.html";
+            else
+                request_uri += 1;
+            request_ver = strtok(NULL, " ");
+            request_ver[strcspn(request_ver, "\r\n")] = 0;    //remove trailing newline
+            //determine if file is in system
+            if (access(request_uri, F_OK) == 0) {
+                //file present
+                //determine file type
+                const char * filetype = get_filename_ext(request_uri);
+                char *content_type;
+                if(strcmp(filetype, "html") == 0)
+                    content_type = "text/html";
+                else if (strcmp(filetype, "txt")==0)
+                    content_type = "text/plain";
+                else if (strcmp(filetype, "png")==0)
+                    content_type = "image/png";
+                else if (strcmp(filetype, "gif")==0)
+                    content_type = "image/gif";
+                else if (strcmp(filetype, "jpg")==0)
+                    content_type = "image/jpg";
+                else if (strcmp(filetype, "css")==0)
+                    content_type = "text/css";
+                printf("request method: %s\n", request_method);
+                printf("request uri: %s\n", request_uri);
+                printf("request ver: %s\n", request_ver);
+                printf("content type: %s\n", content_type);
+            }
+            else {
+                // file doesn't exist
+                char httperr[50];
+                sprintf(httperr, "%s 500 Internal Server Error", request_ver);
+                bzero(buf, MAXBUF);
+                strcpy(buf, httperr);
+                write(connfd, buf, strlen(httperr));
+                continue;
+            }
+        }
+        printf("server received the following request:\n%s\n", buf);
+        strcpy(buf, httpmsg);
+        printf("server returning a http message with the following content.\n%s\n", buf);
+        write(connfd, buf, strlen(httpmsg));
+        break;
+    }
+    return;
 }
 
 /* 
@@ -103,3 +171,9 @@ int open_listenfd(int port)
     return listenfd;
 } /* end open_listenfd */
 
+/*function to determine file extension*/
+const char * get_filename_ext(const char *filename) {
+    const char *dot = strrchr(filename, '.');
+    if(!dot || dot == filename) return "";
+    return dot + 1;
+}
