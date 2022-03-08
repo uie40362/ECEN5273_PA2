@@ -65,6 +65,10 @@ void service_http_request(int connfd)
     char * request_method;
     char * request_uri;
     char *request_ver;
+    char * hostname;
+    char * host_identifier;
+    char * ka_identifier;
+    char * keep_alive;
     char buf[MAXLINE];
     char * httpmsg="HTTP/1.1 200 Document Follows\r\nContent-Type:text/html\r\nContent-Length:32\r\n\r\n<html><h1>Hello CSCI4273 Course!</h1>";
     while(1) {
@@ -85,17 +89,25 @@ void service_http_request(int connfd)
         n = read(connfd, buf, MAXLINE);
         if (!n)
             continue;
+        printf("server received the following request:\n%s\n", buf);
         /*Parse request method*/
-        request_method = strtok(buf, " ");
+        char buf_cpy[MAXLINE];
+        strcpy(buf_cpy, buf);
+        request_method = strtok(buf_cpy, " ");
+
         /*GET method*/
         if (strcmp(request_method, "GET") == 0) {
+
+            /*parse filepath*/
             request_uri = strtok(NULL, " ");
             if (strcmp(request_uri, "/")==0)
                 request_uri = "index.html";
             else
                 request_uri += 1;
-            request_ver = strtok(NULL, " ");
-            request_ver[strcspn(request_ver, "\r\n")] = 0;    //remove trailing newline
+
+            /*parse http version*/
+            request_ver = strtok(NULL, "\r\n");
+//            request_ver[strcspn(request_ver, "\r\n")] = 0;    //remove trailing newline
             //determine if file is in system
             if (access(request_uri, F_OK) == 0) {
                 //file present
@@ -114,13 +126,52 @@ void service_http_request(int connfd)
                     content_type = "image/jpg";
                 else if (strcmp(filetype, "css")==0)
                     content_type = "text/css";
+                else if (strcmp(filetype, "js")==0)
+                    content_type = "application/javascript";
+
                 printf("request method: %s\n", request_method);
                 printf("request uri: %s\n", request_uri);
                 printf("request ver: %s\n", request_ver);
                 printf("content type: %s\n", content_type);
+                /*parse host*/
+                host_identifier = strtok(NULL, ": "); //get rid of "Host: " indicator
+                hostname = strtok(NULL, "\r\n");
+                hostname += 1; //remove extra space at start
+                printf("host name: %s\n", hostname);
+
+                /*parse connection*/
+                ka_identifier = strtok(NULL, ": "); //get rid of "Connection: " indicator
+                keep_alive = strtok(NULL, "\r\n");
+                keep_alive += 1; //remove extra space at start
+
+                /*create and send header*/
+                char header[MAXLINE];
+                /*open file and determine its size*/
+                FILE * fp = fopen(request_uri, "r");
+                fseek(fp, 0, SEEK_END);
+                int size = ftell(fp);   //get size of file
+                fseek(fp, 0, SEEK_SET);
+                sprintf(header, "HTTP/1.1 200 Document Follows\r\nContent-Type:%s\r\nContent-Length:%d\r\n\r\n", content_type, size);
+                strcpy(buf, header);
+                printf("server returning a http message with the following header.\n%s\n", buf);
+                write(connfd, buf, strlen(header));
+
+                /*read file to buf*/
+                while (size) {
+                    bzero(buf, MAXLINE);
+                    int bytes_read = fread(buf, sizeof(char), MAXLINE, fp);
+
+                    /*send buffer to server*/
+                    write(connfd, buf, bytes_read);
+
+                    size -= bytes_read;
+                }
+                printf("Finished sending file\n");
+                fclose(fp);
             }
             else {
                 // file doesn't exist
+                printf("file path: %s\n", request_uri);
                 char httperr[50];
                 sprintf(httperr, "%s 500 Internal Server Error", request_ver);
                 bzero(buf, MAXBUF);
@@ -128,14 +179,23 @@ void service_http_request(int connfd)
                 write(connfd, buf, strlen(httperr));
                 continue;
             }
+
+
+            if (strcmp(keep_alive, "keep-alive")==0) {
+                printf("connection: %s\n", keep_alive);
+                continue;
+            }
+            else{
+                printf("No activity from client. Closing Connection\n");
+                break;
+            }
         }
-        printf("server received the following request:\n%s\n", buf);
-        strcpy(buf, httpmsg);
-        printf("server returning a http message with the following content.\n%s\n", buf);
-        write(connfd, buf, strlen(httpmsg));
+
+//        strcpy(buf, httpmsg);
+//        printf("server returning a http message with the following content.\n%s\n", buf);
+//        write(connfd, buf, strlen(httpmsg));
         break;
     }
-    return;
 }
 
 /* 

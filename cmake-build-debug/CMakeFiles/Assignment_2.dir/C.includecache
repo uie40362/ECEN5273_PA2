@@ -9,4 +9,8 @@
 /mnt/c/Users/goshe/Personal/NUS Matters/Y3S2/ECEN5273/Assignment/Assignment 2/main.c
 stdio.h
 -
+string.h
+-
+stdlib.h
+-
 
