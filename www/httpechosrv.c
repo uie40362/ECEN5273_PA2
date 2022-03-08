@@ -13,6 +13,7 @@
 #include <arpa/inet.h>
 #include <pthread.h>
 #include <errno.h>
+#include <signal.h>
 
 #define MAXLINE  8192  /* max text line length */
 #define MAXBUF   8192  /* max I/O buffer size */
@@ -23,6 +24,10 @@ int open_listenfd(int port);
 void service_http_request(int connfd);
 void *thread(void *vargp);
 const char * get_filename_ext(const char *filename);
+void intHandler(int dummy);
+
+/*globals*/
+static volatile int keep_running = 1;
 
 int main(int argc, char **argv) 
 {
@@ -39,9 +44,14 @@ int main(int argc, char **argv)
 
     listenfd = open_listenfd(port);
     while (1) {
+        /*register signal handler*/
+        signal(SIGINT, intHandler);
         connfdp = malloc(sizeof(int));
         *connfdp = accept(listenfd, (struct sockaddr*)&clientaddr, &clientlen);
         pthread_create(&tid, NULL, thread, connfdp);
+        if (keep_running==0){
+            exit(0);
+        }
     }
 }
 
@@ -59,8 +69,7 @@ void * thread(void * vargp)
 /*
  * service_http_request - service a http request and send a response accordingly
  */
-void service_http_request(int connfd)
-{
+void service_http_request(int connfd){
     size_t n;
     char * request_method;
     char * request_uri;
@@ -71,7 +80,9 @@ void service_http_request(int connfd)
     char * keep_alive;
     char buf[MAXLINE];
     char * httpmsg="HTTP/1.1 200 Document Follows\r\nContent-Type:text/html\r\nContent-Length:32\r\n\r\n<html><h1>Hello CSCI4273 Course!</h1>";
-    while(1) {
+
+
+    while(keep_running) {
         /*setup select function*/
         fd_set select_fds;
         struct timeval timeout;
@@ -196,6 +207,8 @@ void service_http_request(int connfd)
 //        write(connfd, buf, strlen(httpmsg));
         break;
     }
+    /*shutdown server gracefully*/
+    close(connfd);
 }
 
 /* 
@@ -236,4 +249,11 @@ const char * get_filename_ext(const char *filename) {
     const char *dot = strrchr(filename, '.');
     if(!dot || dot == filename) return "";
     return dot + 1;
+}
+
+/*signal handler (ctrl+c)*/
+void intHandler(int dummy) {
+    keep_running = 0;
+    printf("\nWEB SERVER SHUTDOWN\n");
+    exit(0);
 }
